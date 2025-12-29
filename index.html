@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>単語マッチング（英→自動和訳→手直し→ゲーム）</title>
+  <style>
+    :root{ --bd:#ddd; --muted:#666; }
+    body{ font-family: system-ui,-apple-system,"Hiragino Kaku Gothic ProN",Meiryo,sans-serif; margin:18px; }
+    h1{ font-size:20px; margin:0 0 10px; }
+    .card{ border:1px solid var(--bd); border-radius:14px; padding:14px; margin:12px 0; }
+    textarea{ width:100%; height:160px; font-size:14px; padding:10px; border-radius:12px; border:1px solid #ccc; }
+    input{ padding:8px 10px; border-radius:10px; border:1px solid #ccc; }
+    button{ padding:10px 14px; border-radius:12px; border:1px solid #ccc; background:#fff; cursor:pointer; }
+    button.primary{ border-color:#222; }
+    button:disabled{ opacity:.55; cursor:not-allowed; }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .split{ display:flex; gap:12px; flex-wrap:wrap; }
+    .split > div{ flex:1 1 320px; }
+    .muted{ color:var(--muted); font-size:13px; }
+    .warn{ color:#c62828; font-size:13px; }
+    .ok{ color:#2e7d32; font-size:13px; }
+    .hidden{ display:none; }
+    .pill{ display:inline-block; padding:2px 10px; border:1px solid var(--bd); border-radius:999px; font-size:12px; }
+    .grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .colTitle{ font-weight:700; margin:4px 0 8px; }
+    .list{ display:grid; gap:10px; }
+    .tile{
+      border:1px solid #ccc; border-radius:14px; padding:12px;
+      background:#fff; text-align:left; user-select:none;
+      display:flex; justify-content:space-between; align-items:center;
+      min-height:48px;
+    }
+    .tile small{ color:var(--muted); }
+    .tile.selected{ border-color:#111; box-shadow:0 0 0 2px rgba(0,0,0,.06) inset; }
+    .tile.matched{ border-color:#2e7d32; background:#f6fff7; opacity:.9; }
+    .tile.wrong{ border-color:#c62828; background:#fff6f6; }
+    .hud{ display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .bearWrap{ display:flex; gap:12px; align-items:center; }
+    .bear{
+      width:74px; height:74px; border-radius:18px;
+      border:1px solid var(--bd);
+      display:grid; place-items:center;
+      font-size:44px;
+      background:#fff;
+    }
+    .big{ font-size:18px; font-weight:700; }
+    canvas#confetti{ position:fixed; inset:0; pointer-events:none; }
+    .note{ font-size:12px; color:var(--muted); }
+    .footerBtns{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+  </style>
+</head>
+<body>
+  <canvas id="confetti" class="hidden"></canvas>
+
+  <h1>単語マッチング（英語→日本語）</h1>
+
+  <!-- SETUP -->
+  <div class="card" id="setupCard">
+    <!-- ✅ 追加：手動リスト名 -->
+    <div class="row" style="margin-bottom:8px;">
+      <label class="muted">リスト名：</label>
+      <input id="listNameInput" placeholder="例：Day63 動詞 / 準1級①" style="min-width:260px;">
+      <span class="muted">（この名前ごとに自動保存）</span>
+    </div>
+
+    <div class="split">
+      <div>
+        <p class="muted">
+          1行に1語（英語だけ）を入力（10〜15語おすすめ）<br>
+          例：<span class="pill">compromise</span> <span class="pill">define</span>
+        </p>
+        <textarea id="enInput" placeholder="英単語をここに（1行1語）"></textarea>
+
+        <div class="row" style="margin-top:10px;">
+          <button id="fetchBtn">日本語を自動取得</button>
+          <button class="primary" id="startBtn" disabled>ゲーム開始</button>
+          <button id="sampleBtn">サンプル</button>
+        </div>
+
+        <div class="muted" id="progress" style="margin-top:6px;"></div>
+        <div class="warn" id="warn"></div>
+        <div class="ok" id="ok"></div>
+
+        <p class="note" style="margin-top:10px;">
+          ※ 翻訳はネットが必要です。失敗した行は空欄になるので、右のリストで手直しできます。<br>
+          ※ 自動保存は「リスト名」が入っている時だけ働きます（名前なしでも遊べます）。
+        </p>
+      </div>
+
+      <div>
+        <p class="muted"><b>英語 = 日本語（ここで手直しOK）</b></p>
+        <textarea id="pairsArea" placeholder="自動取得後、ここに「英語 = 日本語」が入ります（手で直せます）"></textarea>
+        <div class="muted" style="margin-top:6px;">
+          形式：<code>word = 日本語</code>（1行1つ）／ここはリスト名ごとに自動保存されます
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GAME -->
+  <div class="card hidden" id="gameCard">
+    <div class="hud">
+      <div class="bearWrap">
+        <div class="bear" id="bearFace" title="くま">😐</div>
+        <div>
+          <div class="big">マッチング</div>
+          <div class="muted">
+            正解 <b id="score">0</b> / <span id="total">0</span>　
+            ミス <b id="mistakes">0</b>
+            <span class="pill" id="statePill">真顔くま</span>
+          </div>
+          <div class="muted" id="hint">英語をクリック → 日本語をクリック</div>
+        </div>
+      </div>
+      <div class="row">
+        <button id="resetBtn">最初に戻る</button>
+        <button id="shuffleBtn">並べ直す</button>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:12px;">
+      <div>
+        <div class="colTitle">英語</div>
+        <div class="list" id="enList"></div>
+      </div>
+      <div>
+        <div class="colTitle">日本語</div>
+        <div class="list" id="jaList"></div>
+      </div>
+    </div>
+
+    <div class="footerBtns">
+      <button class="primary" id="reviewWrongBtn" disabled>まちがえた単語だけ復習（最大10）</button>
+      <button id="playAgainBtn">同じセットでもう一回</button>
+    </div>
+  </div>
+
+  <!-- RESULT -->
+  <div class="card hidden" id="resultCard">
+    <div class="big">結果</div>
+    <p id="resultText" class="muted"></p>
+    <div id="wrongBox" class="muted"></div>
+    <div class="footerBtns">
+      <button class="primary" id="retryWrongBtn" disabled>まちがえた単語だけ（最大10）</button>
+      <button id="retryAllBtn">全部もう一回</button>
+      <button id="backBtn">入力へ戻る</button>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  // UI
+  const setupCard = $("setupCard");
+  const gameCard = $("gameCard");
+  const resultCard = $("resultCard");
+  const confetti = $("confetti");
+
+  const listNameInput = $("listNameInput");
+  const enInput = $("enInput");
+  const pairsArea = $("pairsArea");
+  const fetchBtn = $("fetchBtn");
+  const startBtn = $("startBtn");
+  const sampleBtn = $("sampleBtn");
+  const warn = $("warn");
+  const ok = $("ok");
+  const progress = $("progress");
+
+  const enList = $("enList");
+  const jaList = $("jaList");
+  const scoreEl = $("score");
+  const totalEl = $("total");
+  const mistakesEl = $("mistakes");
+  const bearFace = $("bearFace");
+  const statePill = $("statePill");
+  const hint = $("hint");
+
+  const resetBtn = $("resetBtn");
+  const shuffleBtn = $("shuffleBtn");
+  const playAgainBtn = $("playAgainBtn");
+  const reviewWrongBtn = $("reviewWrongBtn");
+
+  const resultText = $("resultText");
+  const wrongBox = $("wrongBox");
+  const retryWrongBtn = $("retryWrongBtn");
+  const retryAllBtn = $("retryAllBtn");
+  const backBtn = $("backBtn");
+
+  // ✅ 自動保存（名前付き）
+  const KEY_LAST = "fwe_last_list_name_v1";
+  const keyFor = (name) => "fwe_matching_list_v1_" + name;
+
+  function saveLastName(name){
+    localStorage.setItem(KEY_LAST, name);
+  }
+
+  function autoSavePairs(){
+    const name = listNameInput.value.trim();
+    if (!name) return; // 名前が無い時は保存しない（でも遊べる）
+    localStorage.setItem(keyFor(name), pairsArea.value);
+    saveLastName(name);
+  }
+
+  function loadPairsByName(name){
+    if (!name) return null;
+    return localStorage.getItem(keyFor(name));
+  }
+
+  // Data
+  let basePairs = [];        // full set
+  let currentPairs = [];     // current game set
+  let wrongPairs = [];       // pairs user got wrong at least once (unique)
+  let mistakes = 0;
+  let matched = 0;
+
+  // Selection
+  let selectedEN = null;
+  let selectedJA = null;
+
+  // ---------- helpers ----------
+  function show(which){
+    setupCard.classList.add("hidden");
+    gameCard.classList.add("hidden");
+    resultCard.classList.add("hidden");
+    which.classList.remove("hidden");
+  }
+
+  function normalize(s){
+    return s.trim().replace(/\s+/g, " ");
+  }
+
+  function uniqByKey(arr, keyFn){
+    const seen = new Set();
+    const out = [];
+    for (const x of arr){
+      const k = keyFn(x);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(x);
+    }
+    return out;
+  }
+
+  function shuffle(arr){
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function parseEN(text){
+    const lines = text.split(/\r?\n/).map(normalize).filter(Boolean);
+    const seen = new Set();
+    const out = [];
+    for (const w of lines){
+      const k = w.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(w);
+    }
+    return out;
+  }
+
+  function parsePairs(text){
+    const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const out = [];
+    for (const line of lines){
+      if (!line.includes("=")) continue;
+      const parts = line.split("=").map(s => s.trim());
+      const en = parts[0] || "";
+      const ja = parts.slice(1).join("=").trim();
+      if (en && ja) out.push({ en, ja });
+    }
+    return uniqByKey(out, x => x.en.toLowerCase());
+  }
+
+  function updateStartEnabled(){
+    const items = parsePairs(pairsArea.value);
+    startBtn.disabled = items.length < 4;
+  }
+
+  // ---------- Bear state ----------
+  function setBearByMistakes(m){
+    if (m === 0){
+      bearFace.textContent = "😄";
+      statePill.textContent = "笑顔くま";
+    } else if (m <= 2){
+      bearFace.textContent = "😐";
+      statePill.textContent = "真顔くま";
+    } else {
+      bearFace.textContent = "😠";
+      statePill.textContent = "怒りくま";
+    }
+  }
+
+  // ---------- Sound ----------
+  let audioCtx = null;
+  function beep(freq, dur=0.12, type="sine", gain=0.06){
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    g.gain.value = gain;
+    osc.connect(g);
+    g.connect(audioCtx.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur);
+  }
+
+  function playWinJingle(){
+    const notes = [523.25, 659.25, 783.99, 1046.50];
+    let delay = 0;
+    notes.forEach((f) => {
+      setTimeout(() => beep(f, 0.14, "triangle", 0.07), delay);
+      delay += 160;
+    });
+    setTimeout(() => beep(1318.51, 0.18, "triangle", 0.07), delay);
+  }
+
+  function playCorrect(){ beep(880, 0.09, "square", 0.05); }
+  function playWrong(){
+    beep(220, 0.12, "sawtooth", 0.06);
+    setTimeout(() => beep(196, 0.12, "sawtooth", 0.06), 120);
+  }
+
+  // ---------- Confetti ----------
+  function launchConfetti(){
+    confetti.classList.remove("hidden");
+    const canvas = confetti;
+    const ctx = canvas.getContext("2d");
+
+    const resize = () => {
+      canvas.width = window.innerWidth * devicePixelRatio;
+      canvas.height = window.innerHeight * devicePixelRatio;
+    };
+    resize();
+    window.addEventListener("resize", resize, { once:true });
+
+    const W = canvas.width, H = canvas.height;
+    const N = 180;
+    const parts = Array.from({length:N}, () => ({
+      x: Math.random()*W,
+      y: -Math.random()*H*0.3,
+      vx: (Math.random()*2-1) * 1.2 * devicePixelRatio,
+      vy: (Math.random()*2+2) * 1.6 * devicePixelRatio,
+      r: (Math.random()*5+3) * devicePixelRatio,
+      a: Math.random()*Math.PI*2,
+      va: (Math.random()*0.2-0.1)
+    }));
+
+    let frames = 0;
+    function tick(){
+      frames++;
+      ctx.clearRect(0,0,W,H);
+      for (const p of parts){
+        p.x += p.vx;
+        p.y += p.vy;
+        p.a += p.va;
+        p.vy += 0.02 * devicePixelRatio;
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.a);
+        ctx.fillStyle = `hsl(${Math.floor(Math.random()*360)}, 90%, 55%)`;
+        ctx.fillRect(-p.r, -p.r/2, p.r*2, p.r);
+        ctx.restore();
+
+        if (p.y > H + 60*devicePixelRatio){
+          p.y = -20*devicePixelRatio;
+          p.vy = (Math.random()*2+2) * 1.6 * devicePixelRatio;
+        }
+      }
+      if (frames < 140) requestAnimationFrame(tick);
+      else confetti.classList.add("hidden");
+    }
+    tick();
+  }
+
+  // ---------- Translation ----------
+  async function translateENtoJA(en){
+    const url = "https://api.mymemory.translated.net/get?q=" +
+      encodeURIComponent(en) + "&langpair=en|ja";
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("API error");
+    const data = await res.json();
+    const t = data?.responseData?.translatedText;
+    if (!t) throw new Error("no translation");
+    return String(t).trim();
+  }
+
+  async function fetchTranslations(){
+    warn.textContent = ""; ok.textContent = ""; progress.textContent = "";
+    const list = parseEN(enInput.value);
+
+    if (list.length < 4){
+      warn.textContent = "4語以上必要です（マッチングが成立しないので）";
+      return;
+    }
+    if (list.length > 30){
+      warn.textContent = "多すぎるので30語以内にしてください";
+      return;
+    }
+
+    fetchBtn.disabled = true;
+    startBtn.disabled = true;
+
+    const lines = [];
+    for (let i=0; i<list.length; i++){
+      const en = list[i];
+      progress.textContent = `翻訳中... ${i+1}/${list.length}（${en}）`;
+      try{
+        const ja = await translateENtoJA(en);
+        lines.push(`${en} = ${ja}`);
+      } catch(e){
+        lines.push(`${en} = `);
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    pairsArea.value = lines.join("\n");
+    progress.textContent = "翻訳完了。空欄は手で直してから「ゲーム開始」へ。";
+    ok.textContent = "OK：右のリストを確認してください。";
+    fetchBtn.disabled = false;
+
+    // ✅ ここで自動保存（リスト名が入っていれば）
+    autoSavePairs();
+    updateStartEnabled();
+  }
+
+  // ---------- Game ----------
+  function buildGame(pairs){
+    currentPairs = pairs.slice();
+    wrongPairs = [];
+    mistakes = 0;
+    matched = 0;
+    selectedEN = null;
+    selectedJA = null;
+
+    scoreEl.textContent = "0";
+    mistakesEl.textContent = "0";
+    totalEl.textContent = String(currentPairs.length);
+
+    setBearByMistakes(mistakes);
+    hint.textContent = "英語をクリック → 日本語をクリック";
+
+    renderLists();
+    reviewWrongBtn.disabled = true;
+    show(gameCard);
+  }
+
+  function renderLists(){
+    enList.innerHTML = "";
+    jaList.innerHTML = "";
+
+    const left = currentPairs.map((p, idx) => ({ id: "p"+idx, en:p.en, ja:p.ja }));
+    const right = shuffle(left.map(x => ({...x})));
+
+    left.forEach(item => {
+      const el = document.createElement("div");
+      el.className = "tile";
+      el.textContent = item.en;
+      el.dataset.id = item.id;
+      el.dataset.side = "en";
+      el.addEventListener("click", () => selectTile(el));
+      enList.appendChild(el);
+    });
+
+    right.forEach(item => {
+      const el = document.createElement("div");
+      el.className = "tile";
+      el.textContent = item.ja;
+      el.dataset.id = item.id;
+      el.dataset.side = "ja";
+      el.addEventListener("click", () => selectTile(el));
+      jaList.appendChild(el);
+    });
+  }
+
+  function clearSelectionVisual(){
+    [...document.querySelectorAll(".tile.selected")].forEach(el => el.classList.remove("selected"));
+  }
+
+  function markWrongFlash(el1, el2){
+    el1.classList.add("wrong");
+    el2.classList.add("wrong");
+    setTimeout(() => { el1.classList.remove("wrong"); el2.classList.remove("wrong"); }, 350);
+  }
+
+  function markMatched(id){
+    const enEl = enList.querySelector(`.tile[data-id="${id}"]`);
+    const jaEl = jaList.querySelector(`.tile[data-id="${id}"]`);
+    if (enEl){ enEl.classList.add("matched"); enEl.style.pointerEvents="none"; }
+    if (jaEl){ jaEl.classList.add("matched"); jaEl.style.pointerEvents="none"; }
+  }
+
+  function selectTile(el){
+    if (el.classList.contains("matched")) return;
+
+    const side = el.dataset.side;
+    clearSelectionVisual();
+    el.classList.add("selected");
+
+    if (side === "en") selectedEN = el;
+    else selectedJA = el;
+
+    if (selectedEN && selectedJA){
+      const okMatch = selectedEN.dataset.id === selectedJA.dataset.id;
+
+      if (okMatch){
+        playCorrect();
+        matched++;
+        scoreEl.textContent = String(matched);
+        markMatched(selectedEN.dataset.id);
+
+        selectedEN = null;
+        selectedJA = null;
+        clearSelectionVisual();
+
+        if (matched === currentPairs.length) finishGame();
+        else hint.textContent = "ナイス！ 次もいこう";
+      } else {
+        playWrong();
+        mistakes++;
+        mistakesEl.textContent = String(mistakes);
+        setBearByMistakes(mistakes);
+        hint.textContent = "ちがう！ もう一回";
+
+        const wrongId = selectedEN.dataset.id;
+        const idx = Number(wrongId.replace("p",""));
+        const pair = currentPairs[idx];
+        wrongPairs.push(pair);
+        wrongPairs = uniqByKey(wrongPairs, x => x.en.toLowerCase());
+
+        markWrongFlash(selectedEN, selectedJA);
+
+        selectedEN = null;
+        selectedJA = null;
+        clearSelectionVisual();
+      }
+    }
+  }
+
+  function finishGame(){
+    if (mistakes === 0){
+      setBearByMistakes(0);
+      launchConfetti();
+      playWinJingle();
+      hint.textContent = "満点！！🎉";
+    } else {
+      hint.textContent = "クリア！";
+    }
+
+    const reviewSet = wrongPairs.slice(0, 10);
+    reviewWrongBtn.disabled = reviewSet.length < 4;
+    setTimeout(showResult, mistakes === 0 ? 800 : 250);
+  }
+
+  function showResult(){
+    show(resultCard);
+    const total = currentPairs.length;
+    resultText.textContent = `正解 ${total} / ${total}（ミス ${mistakes}）`;
+
+    const reviewSet = wrongPairs.slice(0, 10);
+    if (wrongPairs.length === 0){
+      wrongBox.innerHTML = "<p>まちがえた単語はありません 🎉</p>";
+      retryWrongBtn.disabled = true;
+    } else {
+      retryWrongBtn.disabled = reviewSet.length < 4;
+      const items = wrongPairs.map(p => `<li>${escapeHtml(p.en)} = ${escapeHtml(p.ja)}</li>`).join("");
+      wrongBox.innerHTML = `<p><b>まちがえた単語（復習用）</b></p><ul>${items}</ul>
+        <p class="muted">※「まちがえた単語だけ復習」は最大10個。4個未満だと全体に戻します。</p>`;
+    }
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ---------- Buttons ----------
+  sampleBtn.addEventListener("click", () => {
+    enInput.value =
+`compromise
+contaminate
+define
+deflect
+demolish
+endorse
+forfeit
+hinder
+loiter
+modify
+prosper
+provoke
+reciprocate
+relocate
+resent`;
+  });
+
+  fetchBtn.addEventListener("click", fetchTranslations);
+
+  // ✅ pairsArea を直したら：開始可否チェック＋自動保存
+  pairsArea.addEventListener("input", () => {
+    updateStartEnabled();
+    autoSavePairs();
+  });
+
+  // ✅ リスト名を変えたら自動切替（保存済みがあれば復元）
+  listNameInput.addEventListener("change", () => {
+    warn.textContent = ""; ok.textContent = "";
+    const name = listNameInput.value.trim();
+    if (!name) return;
+    const saved = loadPairsByName(name);
+    if (saved != null){
+      pairsArea.value = saved;
+      ok.textContent = `「${name}」を読み込みました`;
+    } else {
+      pairsArea.value = "";
+      ok.textContent = `新しい「${name}」を作成します（右に貼ってください）`;
+    }
+    updateStartEnabled();
+    saveLastName(name);
+  });
+
+  startBtn.addEventListener("click", () => {
+    warn.textContent = ""; ok.textContent = "";
+    const pairs = parsePairs(pairsArea.value);
+    if (pairs.length < 4){
+      warn.textContent = "4語以上「英語 = 日本語」でそろえてください（空欄があるかも）";
+      return;
+    }
+    basePairs = pairs.slice();
+    buildGame(basePairs);
+  });
+
+  resetBtn.addEventListener("click", () => show(setupCard));
+
+  shuffleBtn.addEventListener("click", () => {
+    selectedEN = null; selectedJA = null;
+    renderLists();
+    hint.textContent = "並べ直したよ";
+  });
+
+  playAgainBtn.addEventListener("click", () => buildGame(basePairs));
+
+  reviewWrongBtn.addEventListener("click", () => {
+    const set = wrongPairs.slice(0, 10);
+    if (set.length >= 4) buildGame(set);
+    else buildGame(basePairs);
+  });
+
+  retryAllBtn.addEventListener("click", () => buildGame(basePairs));
+
+  retryWrongBtn.addEventListener("click", () => {
+    const set = wrongPairs.slice(0, 10);
+    if (set.length >= 4) buildGame(set);
+    else buildGame(basePairs);
+  });
+
+  backBtn.addEventListener("click", () => show(setupCard));
+
+  // ✅ 起動時：前回のリスト名＋内容を自動復元
+  window.addEventListener("DOMContentLoaded", () => {
+    const last = localStorage.getItem(KEY_LAST);
+    if (last){
+      listNameInput.value = last;
+      const saved = loadPairsByName(last);
+      if (saved){
+        pairsArea.value = saved;
+      }
+    }
+    updateStartEnabled();
+  });
+
+})();
+</script>
+</body>
+</html>
