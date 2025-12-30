@@ -10,9 +10,10 @@
     h1{ font-size:20px; margin:0 0 10px; }
     .card{ border:1px solid var(--bd); border-radius:14px; padding:14px; margin:12px 0; }
     textarea{ width:100%; height:160px; font-size:14px; padding:10px; border-radius:12px; border:1px solid #ccc; }
-    input{ padding:8px 10px; border-radius:10px; border:1px solid #ccc; }
+    input, select{ padding:8px 10px; border-radius:10px; border:1px solid #ccc; }
     button{ padding:10px 14px; border-radius:12px; border:1px solid #ccc; background:#fff; cursor:pointer; }
     button.primary{ border-color:#222; }
+    button.danger{ border-color:#c62828; color:#c62828; }
     button:disabled{ opacity:.55; cursor:not-allowed; }
     .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
     .split{ display:flex; gap:12px; flex-wrap:wrap; }
@@ -48,6 +49,8 @@
     canvas#confetti{ position:fixed; inset:0; pointer-events:none; }
     .note{ font-size:12px; color:var(--muted); }
     .footerBtns{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+    .mini{ padding:8px 10px; border-radius:10px; }
+    .sep{ height:1px; background:var(--bd); margin:10px 0; }
   </style>
 </head>
 <body>
@@ -57,7 +60,25 @@
 
   <!-- SETUP -->
   <div class="card" id="setupCard">
-    <!-- ✅ 追加：手動リスト名 -->
+
+    <!-- ✅ 保存済みリスト操作 -->
+    <div class="row" style="margin-bottom:8px;">
+      <label class="muted">保存済み：</label>
+      <select id="savedSelect" style="min-width:260px;">
+        <option value="">（なし）</option>
+      </select>
+      <button class="mini" id="loadSavedBtn">読み込み</button>
+      <button class="mini danger" id="deleteSavedBtn" disabled>削除</button>
+      <button class="mini" id="exportOneBtn" disabled>Export（このリスト）</button>
+      <button class="mini" id="exportAllBtn">Export（全部）</button>
+      <button class="mini" id="importBtn">Import</button>
+      <input id="importFile" type="file" class="hidden" accept=".json,.txt" />
+      <span class="muted" id="savedCount"></span>
+    </div>
+
+    <div class="sep"></div>
+
+    <!-- ✅ 既存：手動リスト名 -->
     <div class="row" style="margin-bottom:8px;">
       <label class="muted">リスト名：</label>
       <input id="listNameInput" placeholder="例：Day63 動詞 / 準1級①" style="min-width:260px;">
@@ -84,7 +105,8 @@
 
         <p class="note" style="margin-top:10px;">
           ※ 翻訳はネットが必要です。失敗した行は空欄になるので、右のリストで手直しできます。<br>
-          ※ 自動保存は「リスト名」が入っている時だけ働きます（名前なしでも遊べます）。
+          ※ 自動保存は「リスト名」が入っている時だけ働きます（名前なしでも遊べます）。<br>
+          ※ 端末内保存（ブラウザ）なので、別端末・別ブラウザには引き継がれません。必要なら Export/Import を使ってください。
         </p>
       </div>
 
@@ -158,6 +180,15 @@
   const resultCard = $("resultCard");
   const confetti = $("confetti");
 
+  const savedSelect = $("savedSelect");
+  const savedCount = $("savedCount");
+  const loadSavedBtn = $("loadSavedBtn");
+  const deleteSavedBtn = $("deleteSavedBtn");
+  const exportOneBtn = $("exportOneBtn");
+  const exportAllBtn = $("exportAllBtn");
+  const importBtn = $("importBtn");
+  const importFile = $("importFile");
+
   const listNameInput = $("listNameInput");
   const enInput = $("enInput");
   const pairsArea = $("pairsArea");
@@ -190,7 +221,8 @@
 
   // ✅ 自動保存（名前付き）
   const KEY_LAST = "fwe_last_list_name_v1";
-  const keyFor = (name) => "fwe_matching_list_v1_" + name;
+  const PREFIX = "fwe_matching_list_v1_";   // ←各リストの保存キーの接頭辞
+  const keyFor = (name) => PREFIX + name;
 
   function saveLastName(name){
     localStorage.setItem(KEY_LAST, name);
@@ -201,11 +233,138 @@
     if (!name) return; // 名前が無い時は保存しない（でも遊べる）
     localStorage.setItem(keyFor(name), pairsArea.value);
     saveLastName(name);
+    refreshSavedUI(name);
   }
 
   function loadPairsByName(name){
     if (!name) return null;
     return localStorage.getItem(keyFor(name));
+  }
+
+  function listSavedNames(){
+    const names = [];
+    for (let i=0; i<localStorage.length; i++){
+      const k = localStorage.key(i);
+      if (!k) continue;
+      if (k.startsWith(PREFIX)){
+        const name = k.slice(PREFIX.length);
+        if (name) names.push(name);
+      }
+    }
+    names.sort((a,b) => a.localeCompare(b, "ja"));
+    return names;
+  }
+
+  function setOk(msg){ ok.textContent = msg; warn.textContent = ""; }
+  function setWarn(msg){ warn.textContent = msg; ok.textContent = ""; }
+
+  function refreshSavedUI(preferName=""){
+    const names = listSavedNames();
+    const current = savedSelect.value;
+    savedSelect.innerHTML = `<option value="">（なし）</option>` + names.map(n => {
+      const esc = escapeHtml(n);
+      return `<option value="${esc}">${esc}</option>`;
+    }).join("");
+
+    // 件数表示
+    savedCount.textContent = names.length ? `保存 ${names.length}件` : `保存 0件`;
+
+    // 選択を復元（優先：preferName → current → listNameInput）
+    const want = preferName || current || listNameInput.value.trim();
+    if (want && names.includes(want)){
+      savedSelect.value = want;
+    } else {
+      savedSelect.value = "";
+    }
+
+    // ボタン活性
+    const hasSel = !!savedSelect.value;
+    deleteSavedBtn.disabled = !hasSel;
+    exportOneBtn.disabled = !hasSel;
+  }
+
+  function applyLoaded(name, text){
+    listNameInput.value = name || "";
+    pairsArea.value = text || "";
+    updateStartEnabled();
+    if (name) saveLastName(name);
+    refreshSavedUI(name);
+  }
+
+  function downloadText(filename, text, mime="text/plain"){
+    const blob = new Blob([text], {type: mime});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportOne(name){
+    const pairs = loadPairsByName(name);
+    if (pairs == null){
+      setWarn(`「${name}」が見つかりません`);
+      refreshSavedUI();
+      return;
+    }
+    const payload = {
+      type: "fwe_matching_export_one_v1",
+      exportedAt: new Date().toISOString(),
+      name,
+      pairsText: pairs
+    };
+    downloadText(`FWE_List_${safeFile(name)}.json`, JSON.stringify(payload, null, 2), "application/json");
+    setOk(`Exportしました：${name}`);
+  }
+
+  function exportAll(){
+    const names = listSavedNames();
+    const lists = {};
+    names.forEach(n => { lists[n] = localStorage.getItem(keyFor(n)) ?? ""; });
+    const payload = {
+      type: "fwe_matching_export_all_v1",
+      exportedAt: new Date().toISOString(),
+      count: names.length,
+      lists
+    };
+    downloadText(`FWE_All_Lists.json`, JSON.stringify(payload, null, 2), "application/json");
+    setOk(`全部Exportしました（${names.length}件）`);
+  }
+
+  function importPayload(obj, fallbackName=""){
+    // 1件
+    if (obj?.type === "fwe_matching_export_one_v1"){
+      const name = String(obj.name || "").trim() || fallbackName;
+      const pairsText = String(obj.pairsText || "");
+      if (!name){
+        setWarn("Import失敗：リスト名がありません");
+        return;
+      }
+      localStorage.setItem(keyFor(name), pairsText);
+      applyLoaded(name, pairsText);
+      setOk(`Importしました：${name}`);
+      return;
+    }
+    // 全部
+    if (obj?.type === "fwe_matching_export_all_v1" && obj.lists && typeof obj.lists === "object"){
+      const entries = Object.entries(obj.lists);
+      entries.forEach(([name, pairsText]) => {
+        const n = String(name || "").trim();
+        if (!n) return;
+        localStorage.setItem(keyFor(n), String(pairsText || ""));
+      });
+      refreshSavedUI();
+      setOk(`Importしました（${entries.length}件）`);
+      return;
+    }
+    setWarn("Import失敗：このJSON形式は対応していません");
+  }
+
+  function safeFile(name){
+    return String(name).replace(/[\\/:*?"<>|]+/g, "_").slice(0, 80) || "list";
   }
 
   // Data
@@ -399,11 +558,11 @@
     const list = parseEN(enInput.value);
 
     if (list.length < 4){
-      warn.textContent = "4語以上必要です（マッチングが成立しないので）";
+      setWarn("4語以上必要です（マッチングが成立しないので）");
       return;
     }
     if (list.length > 30){
-      warn.textContent = "多すぎるので30語以内にしてください";
+      setWarn("多すぎるので30語以内にしてください");
       return;
     }
 
@@ -425,7 +584,7 @@
 
     pairsArea.value = lines.join("\n");
     progress.textContent = "翻訳完了。空欄は手で直してから「ゲーム開始」へ。";
-    ok.textContent = "OK：右のリストを確認してください。";
+    setOk("OK：右のリストを確認してください。");
     fetchBtn.disabled = false;
 
     // ✅ ここで自動保存（リスト名が入っていれば）
@@ -610,28 +769,107 @@ resent`;
     autoSavePairs();
   });
 
-  // ✅ リスト名を変えたら自動切替（保存済みがあれば復元）
-  listNameInput.addEventListener("change", () => {
-    warn.textContent = ""; ok.textContent = "";
+  // ✅ リスト名を打ってる最中もすぐ反映（change→input）
+  listNameInput.addEventListener("input", () => {
     const name = listNameInput.value.trim();
+    if (!name){
+      // 名前を消しただけなら何もしない（保存もしない）
+      refreshSavedUI();
+      return;
+    }
+    const saved = loadPairsByName(name);
+    if (saved != null && pairsArea.value.trim() === ""){
+      // 新規入力中で右が空のときだけ自動復元（うっかり上書き防止）
+      pairsArea.value = saved;
+      setOk(`「${name}」を読み込みました`);
+      updateStartEnabled();
+    }
+    saveLastName(name);
+    refreshSavedUI(name);
+  });
+
+  // ✅ 保存済み一覧から読み込み
+  loadSavedBtn.addEventListener("click", () => {
+    const name = savedSelect.value.trim();
     if (!name) return;
     const saved = loadPairsByName(name);
-    if (saved != null){
-      pairsArea.value = saved;
-      ok.textContent = `「${name}」を読み込みました`;
-    } else {
-      pairsArea.value = "";
-      ok.textContent = `新しい「${name}」を作成します（右に貼ってください）`;
+    if (saved == null){
+      setWarn(`「${name}」が見つかりません`);
+      refreshSavedUI();
+      return;
     }
-    updateStartEnabled();
-    saveLastName(name);
+    applyLoaded(name, saved);
+    setOk(`「${name}」を読み込みました`);
+  });
+
+  // ✅ 削除
+  deleteSavedBtn.addEventListener("click", () => {
+    const name = savedSelect.value.trim();
+    if (!name) return;
+    const okDel = confirm(`「${name}」を削除しますか？（元に戻せません）`);
+    if (!okDel) return;
+
+    localStorage.removeItem(keyFor(name));
+    // lastがこの名前だったら消す（または空に）
+    const last = localStorage.getItem(KEY_LAST);
+    if (last === name) localStorage.removeItem(KEY_LAST);
+
+    // 表示更新
+    if (listNameInput.value.trim() === name){
+      listNameInput.value = "";
+      pairsArea.value = "";
+      updateStartEnabled();
+    }
+    refreshSavedUI();
+    setOk(`削除しました：${name}`);
+  });
+
+  // ✅ Export（このリスト）
+  exportOneBtn.addEventListener("click", () => {
+    const name = savedSelect.value.trim();
+    if (!name) return;
+    exportOne(name);
+  });
+
+  // ✅ Export（全部）
+  exportAllBtn.addEventListener("click", exportAll);
+
+  // ✅ Import
+  importBtn.addEventListener("click", () => importFile.click());
+
+  importFile.addEventListener("change", async () => {
+    warn.textContent = ""; ok.textContent = "";
+    const file = importFile.files?.[0];
+    importFile.value = ""; // 同じファイル連続選択対策
+    if (!file) return;
+
+    const text = await file.text();
+    const baseName = file.name.replace(/\.[^.]+$/, ""); // 拡張子なし
+    // JSONを試す
+    try{
+      const obj = JSON.parse(text);
+      importPayload(obj, baseName);
+      refreshSavedUI(listNameInput.value.trim());
+      return;
+    } catch(e){
+      // txt扱い（pairsテキスト）
+    }
+    // txt：そのままpairsAreaへ。名前が空ならファイル名を使う
+    const name = listNameInput.value.trim() || baseName;
+    if (!name){
+      setWarn("Import失敗：リスト名がありません");
+      return;
+    }
+    localStorage.setItem(keyFor(name), text);
+    applyLoaded(name, text);
+    setOk(`Importしました：${name}`);
   });
 
   startBtn.addEventListener("click", () => {
     warn.textContent = ""; ok.textContent = "";
     const pairs = parsePairs(pairsArea.value);
     if (pairs.length < 4){
-      warn.textContent = "4語以上「英語 = 日本語」でそろえてください（空欄があるかも）";
+      setWarn("4語以上「英語 = 日本語」でそろえてください（空欄があるかも）");
       return;
     }
     basePairs = pairs.slice();
@@ -664,16 +902,20 @@ resent`;
 
   backBtn.addEventListener("click", () => show(setupCard));
 
-  // ✅ 起動時：前回のリスト名＋内容を自動復元
+  // ✅ 起動時：前回のリスト名＋内容を自動復元 ＋ 一覧更新
   window.addEventListener("DOMContentLoaded", () => {
+    refreshSavedUI();
+
     const last = localStorage.getItem(KEY_LAST);
     if (last){
       listNameInput.value = last;
       const saved = loadPairsByName(last);
       if (saved){
         pairsArea.value = saved;
+        savedSelect.value = last;
       }
     }
+    refreshSavedUI(listNameInput.value.trim());
     updateStartEnabled();
   });
 
